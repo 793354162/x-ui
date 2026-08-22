@@ -90,8 +90,10 @@ type Release struct {
 }
 
 type ServerService struct {
-	xrayService    XrayService
-	inboundService InboundService
+	xrayService        XrayService
+	inboundService     InboundService
+	outboundService    OutboundService
+	routingRuleService RoutingRuleService
 }
 
 func (s *ServerService) GetStatus(lastStatus *Status) *Status {
@@ -244,7 +246,7 @@ func (s *ServerService) GetXrayVersions() ([]string, error) {
 	}
 	var versions []string
 	for _, release := range releases {
-		if release.TagName >= "v26.1.23" {
+		if release.TagName >= "v26.7.28" {
 			versions = append(versions, release.TagName)
 		}
 	}
@@ -579,8 +581,6 @@ func (s *ServerService) ImportDB(file multipart.File) error {
 		}
 		return common.NewErrorf("Error migrating db: %v", err)
 	}
-	s.inboundService.MigrateDB()
-
 	// Start Xray
 	err = s.RestartXrayService()
 	if err != nil {

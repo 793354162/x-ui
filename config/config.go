@@ -15,6 +15,12 @@ var version string
 //go:embed name
 var name string
 
+//go:embed default_xray.json
+var defaultXrayTemplate string
+
+//go:embed test_xray.json
+var testXrayTemplate string
+
 type LogLevel string
 
 const (
@@ -85,4 +91,12 @@ func GetDBFolderPath() string {
 
 func GetDBPath() string {
 	return fmt.Sprintf("%s/%s.db", GetDBFolderPath(), GetName())
+}
+
+func GetDefaultXrayTemplate() string {
+	return defaultXrayTemplate
+}
+
+func GetTestXrayTemplate() string {
+	return testXrayTemplate
 }

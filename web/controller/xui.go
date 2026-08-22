@@ -8,6 +8,8 @@ type XUIController struct {
 	BaseController
 
 	inboundController     *InboundController
+	outboundController    *OutboundController
+	routingRuleController *RoutingRuleController
 	settingController     *SettingController
 	xraySettingController *XraySettingController
 }
@@ -24,10 +26,15 @@ func (a *XUIController) initRouter(g *gin.RouterGroup) {
 
 	g.GET("/", a.index)
 	g.GET("/inbounds", a.inbounds)
+	g.GET("/outbounds", a.outbounds)
+	g.GET("/routing", a.routingRules)
 	g.GET("/settings", a.settings)
 	g.GET("/xray", a.xraySettings)
+	g.GET("/api", a.apiDocs)
 
 	a.inboundController = NewInboundController(g)
+	a.outboundController = NewOutboundController(g)
+	a.routingRuleController = NewRoutingRuleController(g)
 	a.settingController = NewSettingController(g)
 	a.xraySettingController = NewXraySettingController(g)
 }
@@ -40,10 +47,25 @@ func (a *XUIController) inbounds(c *gin.Context) {
 	html(c, "inbounds.html", "pages.inbounds.title", nil)
 }
 
+func (a *XUIController) outbounds(c *gin.Context) {
+	html(c, "outbounds.html", "pages.outbounds.title", nil)
+}
+
+func (a *XUIController) routingRules(c *gin.Context) {
+	html(c, "routing_rules.html", "pages.routingRules.title", nil)
+}
+
 func (a *XUIController) settings(c *gin.Context) {
 	html(c, "settings.html", "pages.settings.title", nil)
 }
 
 func (a *XUIController) xraySettings(c *gin.Context) {
 	html(c, "xray.html", "pages.xray.title", nil)
+}
+
+// apiDocs renders the API reference inside the panel. It reads the same
+// OpenAPI document the API group publishes, so both the page and the raw
+// document stay behind the panel login.
+func (a *XUIController) apiDocs(c *gin.Context) {
+	html(c, "api_docs.html", "pages.apiDocs.title", nil)
 }

@@ -6,7 +6,9 @@ import (
 	"runtime"
 	"sync"
 
+	"github.com/alireza0/x-ui/database/model"
 	"github.com/alireza0/x-ui/logger"
+	"github.com/alireza0/x-ui/util/json_util"
 	"github.com/alireza0/x-ui/xray"
 
 	"go.uber.org/atomic"
@@ -19,10 +21,31 @@ var (
 	result            string
 )
 
+var xrayClientKeys = map[string]struct{}{
+	"email":    {},
+	"id":       {},
+	"password": {},
+	"flow":     {},
+	"method":   {},
+	"auth":     {},
+	"reverse":  {},
+}
+
+var xrayWireguardPeerKeys = map[string]struct{}{
+	"email":        {},
+	"publicKey":    {},
+	"preSharedKey": {},
+	"allowedIPs":   {},
+	"keepAlive":    {},
+}
+
 type XrayService struct {
-	inboundService InboundService
-	settingService SettingService
-	xrayAPI        xray.XrayAPI
+	inboundService     InboundService
+	outboundService    OutboundService
+	routingRuleService RoutingRuleService
+	settingService     SettingService
+	xraySettingService XraySettingService
+	xrayAPI            xray.XrayAPI
 }
 
 func (s *XrayService) IsXrayRunning() bool {
@@ -93,6 +116,11 @@ func (s *XrayService) GetXrayConfig() (*xray.Config, error) {
 		return nil, err
 	}
 
+	err = s.xraySettingService.ensureLocalLogFile(xrayConfig, false)
+	if err != nil {
+		return nil, err
+	}
+
 	s.inboundService.AddTraffic(nil, nil)
 
 	inbounds, err := s.inboundService.GetAllInbounds()
@@ -134,8 +162,12 @@ func (s *XrayService) GetXrayConfig() (*xray.Config, error) {
 						continue
 					}
 				}
+				allowedKeys := xrayClientKeys
+				if inbound.Protocol == model.Wireguard {
+					allowedKeys = xrayWireguardPeerKeys
+				}
 				for key := range c {
-					if key != "email" && key != "id" && key != "password" && key != "flow" && key != "method" && key != "auth" && key != "reverse" {
+					if _, keep := allowedKeys[key]; !keep {
 						delete(c, key)
 					}
 					if flow, ok := c["flow"].(string); ok && flow == "xtls-rprx-vision-udp443" {
@@ -182,16 +214,74 @@ func (s *XrayService) GetXrayConfig() (*xray.Config, error) {
 		inboundConfig := inbound.GenXrayInboundConfig()
 		xrayConfig.InboundConfigs = append(xrayConfig.InboundConfigs, *inboundConfig)
 	}
+
+	xrayConfig.OutboundConfigs = []xray.OutboundConfig{}
+
+	outbounds, err := s.outboundService.GetAllOutbounds()
+	if err != nil {
+		return nil, err
+	}
+	for _, outbound := range outbounds {
+		outboundConfig := outbound.GenXrayOutboundConfig()
+		xrayConfig.OutboundConfigs = append(xrayConfig.OutboundConfigs, *outboundConfig)
+	}
+	mergedRouting, err := s.mergeRoutingRules(xrayConfig.RouterConfig)
+	if err != nil {
+		return nil, err
+	}
+	xrayConfig.RouterConfig = mergedRouting
+
 	return xrayConfig, nil
+}
+
+func (s *XrayService) mergeRoutingRules(routerConfig json_util.RawMessage) (json_util.RawMessage, error) {
+	routing := map[string]interface{}{}
+	if len(routerConfig) > 0 {
+		json.Unmarshal(routerConfig, &routing)
+	}
+	ruleList, err := s.routingRuleService.BuildDbRulesArray()
+	if err != nil {
+		return nil, err
+	}
+	routing["rules"] = ruleList
+	b, err := json.Marshal(routing)
+	if err != nil {
+		return nil, err
+	}
+	return json_util.RawMessage(b), nil
 }
 
 func (s *XrayService) GetXrayTraffic() ([]*xray.Traffic, []*xray.ClientTraffic, error) {
 	if !s.IsXrayRunning() {
 		return nil, nil, errors.New("xray is not running")
 	}
-	s.xrayAPI.Init(p.GetAPIPort())
+	if err := s.xrayAPI.Init(p.GetAPIAddr()); err != nil {
+		return nil, nil, err
+	}
 	defer s.xrayAPI.Close()
 	return s.xrayAPI.GetTraffic(true)
+}
+
+func (s *XrayService) RefreshOnlineUsersCache() error {
+	if !s.IsXrayRunning() {
+		ClearOnlineUsersCache()
+		return nil
+	}
+	if err := s.xrayAPI.Init(p.GetAPIAddr()); err != nil {
+		return err
+	}
+	defer s.xrayAPI.Close()
+
+	users, err := s.xrayAPI.GetUsersOnlineInfo()
+	if err != nil {
+		return err
+	}
+	SetOnlineUsersCache(users)
+	return nil
+}
+
+func (s *XrayService) GetOnlineUsers() []xray.OnlineUserInfo {
+	return GetOnlineUsersCache()
 }
 
 func (s *XrayService) RestartXray(isForce bool) error {
@@ -225,6 +315,7 @@ func (s *XrayService) StopXray() error {
 	lock.Lock()
 	defer lock.Unlock()
 	logger.Debug("stop xray")
+	ClearOnlineUsersCache()
 	if s.IsXrayRunning() {
 		return p.Stop()
 	}

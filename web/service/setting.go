@@ -1,7 +1,6 @@
 package service
 
 import (
-	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alireza0/x-ui/config"
 	"github.com/alireza0/x-ui/database"
 	"github.com/alireza0/x-ui/database/model"
 	"github.com/alireza0/x-ui/logger"
@@ -19,11 +19,8 @@ import (
 	"github.com/alireza0/x-ui/web/entity"
 )
 
-//go:embed config.json
-var xrayTemplateConfig string
-
 var defaultValueMap = map[string]string{
-	"xrayTemplateConfig": xrayTemplateConfig,
+	"xrayTemplateConfig": config.GetDefaultXrayTemplate(),
 	"webListen":          "",
 	"webDomain":          "",
 	"webPort":            "54321",
@@ -36,10 +33,13 @@ var defaultValueMap = map[string]string{
 	"expireDiff":         "0",
 	"trafficDiff":        "0",
 	"remarkModel":        "-ieo",
+	"outboundTestUrl":    "https://www.gstatic.com/generate_204",
 	"timeLocation":       "Asia/Tehran",
 	"tgBotEnable":        "false",
 	"tgBotToken":         "",
 	"tgBotChatId":        "",
+	"tgBotProxy":         "",
+	"tgBotNotifyOnly":    "false",
 	"tgRunTime":          "@daily",
 	"tgBotBackup":        "false",
 	"tgBotLoginNotify":   "false",
@@ -58,11 +58,12 @@ var defaultValueMap = map[string]string{
 	"subURI":             "",
 	"subJsonPath":        "/json/",
 	"subJsonURI":         "",
-	"subJsonFragment":    "",
-	"subJsonNoises":      "",
 	"subJsonMux":         "",
 	"subJsonRules":       "",
+	"globalReset":        "",
+	"globalResetLast":    "0",
 	"warp":               "",
+	"ipBlockAfterRemove": "false",
 }
 
 type SettingService struct{}
@@ -203,6 +204,18 @@ func (s *SettingService) setBool(key string, value bool) error {
 	return s.setString(key, strconv.FormatBool(value))
 }
 
+func (s *SettingService) getInt64(key string) (int64, error) {
+	str, err := s.getString(key)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseInt(str, 10, 64)
+}
+
+func (s *SettingService) setInt64(key string, value int64) error {
+	return s.setString(key, strconv.FormatInt(value, 10))
+}
+
 func (s *SettingService) getInt(key string) (int, error) {
 	str, err := s.getString(key)
 	if err != nil {
@@ -241,6 +254,37 @@ func (s *SettingService) GetTgBotChatId() (string, error) {
 
 func (s *SettingService) SetTgBotChatId(chatIds string) error {
 	return s.setString("tgBotChatId", chatIds)
+}
+
+// GetGlobalReset returns the cron schedule on which every client's traffic is
+// reset, or an empty string when the feature is off.
+func (s *SettingService) GetGlobalReset() (string, error) {
+	return s.getString("globalReset")
+}
+
+func (s *SettingService) SetGlobalReset(spec string) error {
+	return s.setString("globalReset", spec)
+}
+
+// GetGlobalResetLast returns the next boundary the reset job is waiting for.
+func (s *SettingService) GetGlobalResetLast() (int64, error) {
+	return s.getInt64("globalResetLast")
+}
+
+func (s *SettingService) SetGlobalResetLast(at int64) error {
+	return s.setInt64("globalResetLast", at)
+}
+
+func (s *SettingService) GetTgBotProxy() (string, error) {
+	return s.getString("tgBotProxy")
+}
+
+func (s *SettingService) SetTgBotProxy(proxyURL string) error {
+	return s.setString("tgBotProxy", proxyURL)
+}
+
+func (s *SettingService) GetTgBotNotifyOnly() (bool, error) {
+	return s.getBool("tgBotNotifyOnly")
 }
 
 func (s *SettingService) GetTgbotenabled() (bool, error) {
@@ -315,6 +359,10 @@ func (s *SettingService) GetRemarkModel() (string, error) {
 	return s.getString("remarkModel")
 }
 
+func (s *SettingService) GetOutboundTestUrl() (string, error) {
+	return s.getString("outboundTestUrl")
+}
+
 func (s *SettingService) GetSecret() ([]byte, error) {
 	secret, err := s.getString("secret")
 	if secret == defaultValueMap["secret"] {
@@ -373,6 +421,14 @@ func (s *SettingService) GetSubEnable() (bool, error) {
 	return s.getBool("subEnable")
 }
 
+func (s *SettingService) GetIpBlockAfterRemove() (bool, error) {
+	return s.getBool("ipBlockAfterRemove")
+}
+
+func (s *SettingService) SetIpBlockAfterRemove(value bool) error {
+	return s.setBool("ipBlockAfterRemove", value)
+}
+
 func (s *SettingService) GetSubListen() (string, error) {
 	return s.getString("subListen")
 }
@@ -425,14 +481,6 @@ func (s *SettingService) GetSubJsonURI() (string, error) {
 	return s.getString("subJsonURI")
 }
 
-func (s *SettingService) GetSubJsonFragment() (string, error) {
-	return s.getString("subJsonFragment")
-}
-
-func (s *SettingService) GetSubJsonNoises() (string, error) {
-	return s.getString("subJsonNoises")
-}
-
 func (s *SettingService) GetSubJsonMux() (string, error) {
 	return s.getString("subJsonMux")
 }
@@ -454,6 +502,15 @@ func (s *SettingService) UpdateAllSetting(allSetting *entity.AllSetting) error {
 		return err
 	}
 
+	// The reset job waits for the boundary it recorded last time. Switching to a
+	// different schedule must not be held up by the old schedule's boundary, so
+	// forget it and let the new schedule pick the next one.
+	if previous, err := s.GetGlobalReset(); err == nil && previous != allSetting.GlobalReset {
+		if err := s.SetGlobalResetLast(0); err != nil {
+			return err
+		}
+	}
+
 	v := reflect.ValueOf(allSetting).Elem()
 	t := reflect.TypeOf(allSetting).Elem()
 	fields := reflect_util.GetFields(t)
@@ -472,7 +529,7 @@ func (s *SettingService) UpdateAllSetting(allSetting *entity.AllSetting) error {
 
 func (s *SettingService) GetDefaultXrayConfig() (interface{}, error) {
 	var jsonData interface{}
-	err := json.Unmarshal([]byte(xrayTemplateConfig), &jsonData)
+	err := json.Unmarshal([]byte(config.GetDefaultXrayTemplate()), &jsonData)
 	if err != nil {
 		return nil, err
 	}
@@ -482,16 +539,17 @@ func (s *SettingService) GetDefaultXrayConfig() (interface{}, error) {
 func (s *SettingService) GetDefaultSettings(host string) (interface{}, error) {
 	type settingFunc func() (interface{}, error)
 	settings := map[string]settingFunc{
-		"expireDiff":  func() (interface{}, error) { return s.GetExpireDiff() },
-		"trafficDiff": func() (interface{}, error) { return s.GetTrafficDiff() },
-		"pageSize":    func() (interface{}, error) { return s.GetPageSize() },
-		"defaultCert": func() (interface{}, error) { return s.GetCertFile() },
-		"defaultKey":  func() (interface{}, error) { return s.GetKeyFile() },
-		"tgBotEnable": func() (interface{}, error) { return s.GetTgbotenabled() },
-		"subEnable":   func() (interface{}, error) { return s.GetSubEnable() },
-		"subURI":      func() (interface{}, error) { return s.GetSubURI() },
-		"subJsonURI":  func() (interface{}, error) { return s.GetSubJsonURI() },
-		"remarkModel": func() (interface{}, error) { return s.GetRemarkModel() },
+		"expireDiff":         func() (interface{}, error) { return s.GetExpireDiff() },
+		"trafficDiff":        func() (interface{}, error) { return s.GetTrafficDiff() },
+		"pageSize":           func() (interface{}, error) { return s.GetPageSize() },
+		"defaultCert":        func() (interface{}, error) { return s.GetCertFile() },
+		"defaultKey":         func() (interface{}, error) { return s.GetKeyFile() },
+		"tgBotEnable":        func() (interface{}, error) { return s.GetTgbotenabled() },
+		"subEnable":          func() (interface{}, error) { return s.GetSubEnable() },
+		"subURI":             func() (interface{}, error) { return s.GetSubURI() },
+		"subJsonURI":         func() (interface{}, error) { return s.GetSubJsonURI() },
+		"remarkModel":        func() (interface{}, error) { return s.GetRemarkModel() },
+		"ipBlockAfterRemove": func() (interface{}, error) { return s.GetIpBlockAfterRemove() },
 	}
 
 	result := make(map[string]interface{})

@@ -1,6 +1,20 @@
 <!DOCTYPE html>
 <html lang="en">
 {{template "head" .}}
+<link rel="stylesheet" href="{{ .base_path }}assets/codemirror/codemirror.min.css?{{ .cur_ver }}">
+<link rel="stylesheet" href="{{ .base_path }}assets/codemirror/fold/foldgutter.css">
+<link rel="stylesheet" href="{{ .base_path }}assets/codemirror/xq.min.css?{{ .cur_ver }}">
+<link rel="stylesheet" href="{{ .base_path }}assets/codemirror/lint/lint.css">
+<script src="{{ .base_path }}assets/codemirror/codemirror.js?{{ .cur_ver }}"></script>
+<script src="{{ .base_path }}assets/codemirror/javascript.js"></script>
+<script src="{{ .base_path }}assets/codemirror/jshint.js"></script>
+<script src="{{ .base_path }}assets/codemirror/jsonlint.js"></script>
+<script src="{{ .base_path }}assets/codemirror/lint/lint.js"></script>
+<script src="{{ .base_path }}assets/codemirror/lint/javascript-lint.js"></script>
+<script src="{{ .base_path }}assets/codemirror/hint/javascript-hint.js"></script>
+<script src="{{ .base_path }}assets/codemirror/fold/foldcode.js"></script>
+<script src="{{ .base_path }}assets/codemirror/fold/foldgutter.js"></script>
+<script src="{{ .base_path }}assets/codemirror/fold/brace-fold.js"></script>
 <style>
     @media (min-width: 769px) {
         .ant-layout-content {
@@ -68,48 +82,55 @@
                     <a-card hoverable>
                         <a-row>
                             <a-col :xs="24" :sm="24" :lg="12">
-                                <strong>{{ i18n "pages.inbounds.totalDownUp" }}:</strong>
-                                <a-tag color="blue">[[ sizeFormat(total.up) ]] / [[ sizeFormat(total.down) ]]</a-tag>
-                            </a-col>
-                            <a-col :xs="24" :sm="24" :lg="12">
                                 <strong>{{ i18n "pages.inbounds.totalUsage" }}:</strong>
-                                <a-tag color="blue">[[ sizeFormat(total.up + total.down) ]]</a-tag>
+                                <a-tag color="blue">[[ sizeFormat(total.up + total.down) ]] (↑[[ sizeFormat(total.up) ]] ↓[[ sizeFormat(total.down) ]])</a-tag>
                             </a-col>
                             <a-col :xs="24" :sm="24" :lg="12">
                                 <strong>{{ i18n "pages.inbounds.inboundCount" }}:</strong>
                                 <a-tag color="blue">[[ dbInbounds.length ]]</a-tag>
                             </a-col>
                             <a-col :xs="24" :sm="24" :lg="12">
+                                <strong>{{ i18n "online" }}:</strong>
+                                <template v-if="onlineClients.length">
+                                    <a-popover title='{{ i18n "clients" }}' v-if="onlineClients.length" :overlay-class-name="themeSwitcher.currentTheme">
+                                        <template slot="content">
+                                            <p v-for="user in onlineClients">[[ user.email ]]</p>
+                                        </template>
+                                        <a-tag color="green">[[ onlineClients.length ]]</a-tag>
+                                    </a-popover>
+                                    <a-popover title='{{ i18n "pages.inbounds.onlineIps" }} ' :overlay-class-name="themeSwitcher.currentTheme">
+                                        <template slot="content">
+                                            <p v-for="ip in onlineClients.map(user => Object.keys(user.ips)).flat()">[[ ip ]]</p>
+                                        </template>
+                                        <a-tag color="blue">[[ onlineClients.map(user => Object.keys(user.ips)).flat().length ]]</a-tag>
+                                    </a-popover>
+                                </template>
+                                <a-tag v-else>0</a-tag>
+                            </a-col>
+                            <a-col :xs="24" :sm="24" :lg="12">
                                 <template>
                                     <div>
-                                        <a-back-top :target="() => document.getElementById('content-layout')" visibility-height="200">
-                                        </a-back-top>
-                                <strong>{{ i18n "clients" }}:</strong>
-                                <a-tag color="blue">[[ total.clients ]]</a-tag>
-                                <a-popover title='{{ i18n "disabled" }}' :overlay-class-name="themeSwitcher.currentTheme">
-                                    <template slot="content">
-                                        <p v-for="clientEmail in total.deactive">[[ clientEmail ]]</p>
-                                    </template>
-                                    <a-tag v-if="total.deactive.length">[[ total.deactive.length ]]</a-tag>
-                                </a-popover>
-                                <a-popover title='{{ i18n "depleted" }}' :overlay-class-name="themeSwitcher.currentTheme">
-                                    <template slot="content">
-                                        <p v-for="clientEmail in total.depleted">[[ clientEmail ]]</p>
-                                    </template>
-                                    <a-tag color="red" v-if="total.depleted.length">[[ total.depleted.length ]]</a-tag>
-                                </a-popover>
-                                <a-popover title='{{ i18n "depletingSoon" }}' :overlay-class-name="themeSwitcher.currentTheme">
-                                    <template slot="content">
-                                        <p v-for="clientEmail in total.expiring">[[ clientEmail ]]</p>
-                                    </template>
-                                    <a-tag color="orange" v-if="total.expiring.length">[[ total.expiring.length ]]</a-tag>
-                                </a-popover>
-                                <a-popover title='{{ i18n "online" }}' :overlay-class-name="themeSwitcher.currentTheme">
-                                    <template slot="content">
-                                        <p v-for="clientEmail in onlineClients">[[ clientEmail ]]</p>
-                                    </template>
-                                    <a-tag color="green" v-if="onlineClients.length">[[ onlineClients.length ]]</a-tag>
-                                </a-popover>
+                                        <a-back-top :target="() => document.getElementById('content-layout')" visibility-height="200"></a-back-top>
+                                        <strong>{{ i18n "clients" }}:</strong>
+                                        <a-tag color="blue">[[ total.clients ]]</a-tag>
+                                        <a-popover title='{{ i18n "disabled" }}' :overlay-class-name="themeSwitcher.currentTheme">
+                                            <template slot="content">
+                                                <p v-for="clientEmail in total.deactive">[[ clientEmail ]]</p>
+                                            </template>
+                                            <a-tag v-if="total.deactive.length">[[ total.deactive.length ]]</a-tag>
+                                        </a-popover>
+                                        <a-popover title='{{ i18n "depleted" }}' :overlay-class-name="themeSwitcher.currentTheme">
+                                            <template slot="content">
+                                                <p v-for="clientEmail in total.depleted">[[ clientEmail ]]</p>
+                                            </template>
+                                            <a-tag color="red" v-if="total.depleted.length">[[ total.depleted.length ]]</a-tag>
+                                        </a-popover>
+                                        <a-popover title='{{ i18n "depletingSoon" }}' :overlay-class-name="themeSwitcher.currentTheme">
+                                            <template slot="content">
+                                                <p v-for="clientEmail in total.expiring">[[ clientEmail ]]</p>
+                                            </template>
+                                            <a-tag color="orange" v-if="total.expiring.length">[[ total.expiring.length ]]</a-tag>
+                                        </a-popover>
                                     </div>
                                 </template>
                             </a-col>
@@ -205,7 +226,7 @@
                                             <a-icon type="edit"></a-icon>
                                             {{ i18n "edit" }}
                                         </a-menu-item>
-                                        <a-menu-item key="qrcode" v-if="(dbInbound.isSS && !dbInbound.toInbound().isSSMultiUser) || dbInbound.isWireguard">
+                                        <a-menu-item key="qrcode" v-if="dbInbound.isSS && !dbInbound.toInbound().isSSMultiUser">
                                             <a-icon type="qrcode"></a-icon>
                                             {{ i18n "qrCode" }}
                                         </a-menu-item>
@@ -226,7 +247,7 @@
                                                 <a-icon type="export"></a-icon>
                                                 {{ i18n "pages.inbounds.export"}}
                                             </a-menu-item>
-                                            <a-menu-item key="subs" v-if="subSettings.enable">
+                                            <a-menu-item key="subs" v-if="subSettings.enable && !dbInbound.isWireguard">
                                                 <a-icon type="export"></a-icon>
                                                 {{ i18n "pages.inbounds.export"}} - {{ i18n "pages.settings.subSettings" }}
                                             </a-menu-item>
@@ -258,7 +279,7 @@
                                         </a-menu-item>
                                         <a-menu-item v-if="isMobile">
                                             <a-switch size="small" v-model="dbInbound.enable" @change="switchEnable(dbInbound.id,dbInbound.enable)"></a-switch>
-                                            {{ i18n "pages.inbounds.enable" }}
+                                            {{ i18n "enable" }}
                                         </a-menu-item>
                                     </a-menu>
                                 </a-dropdown>
@@ -342,7 +363,7 @@
                                     <template slot="content">
                                         <table cellpadding="2">
                                             <tr>
-                                                <td>{{ i18n "pages.inbounds.protocol" }}</td>
+                                                <td>{{ i18n "protocol" }}</td>
                                                 <td>
                                                     <a-tag style="margin:0;" color="purple">[[ dbInbound.protocol ]]</a-tag>
                                                     <template v-if="dbInbound.isVMess || dbInbound.isVLess || dbInbound.isTrojan || dbInbound.isSS">
@@ -451,7 +472,6 @@
 {{template "js" .}}
 <script src="{{ .base_path }}assets/base64/base64.min.js"></script>
 <script src="{{ .base_path }}assets/qrcode/qrious.min.js"></script>
-<script src="{{ .base_path }}assets/clipboard/clipboard.min.js?{{ .cur_ver }}"></script>
 <script src="{{ .base_path }}assets/uri/URI.min.js?{{ .cur_ver }}"></script>
 <script src="{{ .base_path }}assets/js/model/inbound.js?{{ .cur_ver }}"></script>
 <script src="{{ .base_path }}assets/js/model/dbinbound.js?{{ .cur_ver }}"></script>
@@ -468,12 +488,12 @@
         width: 30,
         scopedSlots: { customRender: 'action' },
     }, {
-        title: '{{ i18n "pages.inbounds.enable" }}',
+        title: '{{ i18n "enable" }}',
         align: 'center',
         width: 30,
         scopedSlots: { customRender: 'enable' },
     }, {
-        title: '{{ i18n "pages.inbounds.remark" }}',
+        title: '{{ i18n "remark" }}',
         align: 'center',
         width: 50,
         dataIndex: "remark",
@@ -483,7 +503,7 @@
         dataIndex: "port",
         width: 40,
     }, {
-        title: '{{ i18n "pages.inbounds.protocol" }}',
+        title: '{{ i18n "protocol" }}',
         align: 'left',
         width: 70,
         scopedSlots: { customRender: 'protocol' },
@@ -516,7 +536,7 @@
         width: 25,
         scopedSlots: { customRender: 'action' },
     }, {
-        title: '{{ i18n "pages.inbounds.remark" }}',
+        title: '{{ i18n "remark" }}',
         align: 'left',
         width: 70,
         dataIndex: "remark",
@@ -534,7 +554,7 @@
                 scopedSlots: { customRender: 'actions' },
             },
             {
-                title: '{{ i18n "pages.inbounds.enable" }}',
+                title: '{{ i18n "enable" }}',
                 width: 20,
                 scopedSlots: { customRender: 'enable' },
             },
@@ -628,6 +648,7 @@
             showAlert: false,
             pageSize: 0,
             isMobile: window.innerWidth <= 768,
+            iplimitSupported: '{{ .iplimitSupported }}' === 'true',
         },
         methods: {
             loading(spinning = true) {
@@ -649,29 +670,39 @@
             async getOnlineUsers() {
                 const msg = await HttpUtil.post('/xui/inbound/onlines');
                 if (!msg.success) {
+                    this.onlineClients = [];
                     return;
                 }
                 this.onlineClients = msg.obj != null ? msg.obj : [];
+            },
+            getOnlineUserIPs(email) {
+                const user = this.onlineClients.find(u => u.email === email);
+                if (!user || !user.ips) {
+                    return [];
+                }
+                return Object.keys(user.ips).map(ip => ({
+                    ip,
+                    lastSeen: user.ips[ip] ? DateUtil.formatMillis(user.ips[ip] * 1000) : '-',
+                }));
             },
             async getDefaultSettings() {
                 const msg = await HttpUtil.post('/xui/setting/defaultSettings');
                 if (!msg.success) {
                     return;
                 }
-                with(msg.obj){
-                    this.expireDiff = expireDiff * 86400000;
-                    this.trafficDiff = trafficDiff * 1073741824;
-                    this.defaultCert = defaultCert;
-                    this.defaultKey = defaultKey;
-                    this.tgBotEnable = tgBotEnable;
-                    this.subSettings = {
-                        enable : subEnable,
-                        subURI: subURI,
-                        subJsonURI: subJsonURI
-                    };
-                    this.pageSize = pageSize;
-                    this.remarkModel = remarkModel;
-                }
+                const { expireDiff, trafficDiff, defaultCert, defaultKey, tgBotEnable, subEnable, subURI, subJsonURI, pageSize, remarkModel } = msg.obj;
+                this.expireDiff = expireDiff * 86400000;
+                this.trafficDiff = trafficDiff * 1073741824;
+                this.defaultCert = defaultCert;
+                this.defaultKey = defaultKey;
+                this.tgBotEnable = tgBotEnable;
+                this.subSettings = {
+                    enable : subEnable,
+                    subURI: subURI,
+                    subJsonURI: subJsonURI
+                };
+                this.pageSize = pageSize;
+                this.remarkModel = remarkModel;
             },
             setInbounds(dbInbounds) {
                 this.inbounds.splice(0);
@@ -682,10 +713,7 @@
                     to_inbound = dbInbound.toInbound()
                     this.inbounds.push(to_inbound);
                     this.dbInbounds.push(dbInbound);
-                    if ([Protocols.VMESS, Protocols.VLESS, Protocols.TROJAN, Protocols.SHADOWSOCKS].includes(inbound.protocol)) {
-                        if (inbound.protocol === Protocols.SHADOWSOCKS && (!to_inbound.isSSMultiUser)) {
-                            continue;
-                        }
+                    if (dbInbound.isMultiUser()) {
                         this.clientCount[inbound.id] = this.getClientCounts(inbound, to_inbound);
                     }
                 }
@@ -1004,6 +1032,8 @@
                     case Protocols.TROJAN:
                     case Protocols.SHADOWSOCKS:
                         return clients.findIndex(item => item.password === client.password && item.email === client.email);
+                    case Protocols.WIREGUARD:
+                        return clients.findIndex(item => item.publicKey === client.publicKey && item.email === client.email);
                     default: return clients.findIndex(item => item.id === client.id && item.email === client.email);
                 }
             },
@@ -1068,6 +1098,7 @@
                     case Protocols.TROJAN: return client.password;
                     case Protocols.SHADOWSOCKS: return client.email;
                     case Protocols.HYSTERIA: return client.auth;
+                    case Protocols.WIREGUARD: return client.email;
                     default: return client.id;
                 }
             },
@@ -1249,7 +1280,7 @@
                 return clientStats ? clientStats['enable'] : true;
             },
             isClientOnline(email) {
-                return this.onlineClients.includes(email);
+                return this.onlineClients.some(u => u.email === email);
             },
             isRemovable(dbInboundId) {
                 return this.getInboundClients(this.dbInbounds.find(row => row.id === dbInboundId)).length > 1;
@@ -1280,7 +1311,7 @@
                     title: '{{ i18n "pages.inbounds.importInbound" }}',
                     type: 'textarea',
                     value: '',
-                    okText: '{{ i18n "pages.inbounds.import" }}',
+                    okText: '{{ i18n "import" }}',
                     confirm: async (dbInboundText) => {
                         await this.submit('/xui/inbound/import', {data: dbInboundText}, promptModal);
                     },

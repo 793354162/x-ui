@@ -11,7 +11,7 @@
         <a-col :xs="24" :md="12">
             <table>
                 <tr><td>{{ i18n "protocol" }}</td><td><a-tag color="purple">[[ dbInbound.protocol ]]</a-tag></td></tr>
-                <tr><td>{{ i18n "pages.inbounds.address" }}</td><td>
+                <tr><td>{{ i18n "address" }}</td><td>
                     <a-tooltip :title="[[ dbInbound.address ]]">
                         <a-tag class="info-large-tag">[[ dbInbound.address ]]</a-tag>
                     </a-tooltip>
@@ -62,7 +62,7 @@
             </table>
         </template>
         </a-col>
-        <template v-if="dbInbound.hasLink()">
+        <template v-if="dbInbound.hasLink() && !dbInbound.isWireguard">
             {{ i18n "security" }}
             <a-tag :color="inbound.stream.security == 'none' ? 'red' : 'green'">[[ inbound.stream.security ]]</a-tag>
             <br />
@@ -92,8 +92,22 @@
                 </a-tooltip>
             </td>
         </tr><tr>
-            <td>{{ i18n "pages.inbounds.network" }}</td>
+            <td>{{ i18n "network" }}</td>
             <td><a-tag color="blue">[[ inbound.settings.network ]]</a-tag></td>
+        </tr>
+    </table>
+    <table v-if="dbInbound.isWireguard" style="margin-bottom: 10px; width: 100%;">
+        <tr>
+            <td>{{ i18n "pages.xray.wireguard.publicKey" }}</td>
+            <td style="overflow-wrap: anywhere;"><a-tag color="blue">[[ inbound.settings.pubKey ]]</a-tag></td>
+        </tr>
+        <tr>
+            <td>MTU</td>
+            <td><a-tag color="blue">[[ inbound.settings.mtu ]]</a-tag></td>
+        </tr>
+        <tr>
+            <td>{{ i18n "pages.inbounds.protocols.noKernelTun" }}</td>
+            <td><a-tag color="blue">[[ inbound.settings.noKernelTun ]]</a-tag></td>
         </tr>
     </table>
     <template v-if="infoModal.clientSettings">
@@ -119,6 +133,24 @@
                     </a-tooltip>
                 </td>
             </tr>
+            <template v-if="dbInbound.isWireguard">
+                <tr>
+                    <td>{{ i18n "pages.xray.wireguard.publicKey" }}</td>
+                    <td style="overflow-wrap: anywhere;"><a-tag>[[ infoModal.clientSettings.publicKey ]]</a-tag></td>
+                </tr>
+                <tr v-if="infoModal.clientSettings.psk">
+                    <td>{{ i18n "pages.xray.wireguard.psk" }}</td>
+                    <td style="overflow-wrap: anywhere;"><a-tag>[[ infoModal.clientSettings.psk ]]</a-tag></td>
+                </tr>
+                <tr>
+                    <td>{{ i18n "pages.xray.wireguard.allowedIPs" }}</td>
+                    <td><a-tag>[[ infoModal.clientSettings.allowedIPs.join(", ") ]]</a-tag></td>
+                </tr>
+                <tr v-if="infoModal.clientSettings.keepAlive">
+                    <td>{{ i18n "pages.inbounds.protocols.keepAlive" }}</td>
+                    <td><a-tag>[[ infoModal.clientSettings.keepAlive ]]</a-tag></td>
+                </tr>
+            </template>
             <tr>
                 <td>{{ i18n "status" }}</td>
                 <td>
@@ -164,13 +196,13 @@
                 </td>
             </tr>
         </table>
-        <template v-if="app.subSettings.enable && infoModal.clientSettings.subId">
+        <template v-if="app.subSettings.enable && infoModal.clientSettings.subId && !dbInbound.isWireguard">
             <a-divider>Subscription URL</a-divider>
             <a-row>
                 <a-col :sx="24" :md="22">SUB: <a :href="[[ infoModal.subLink ]]" target="_blank">[[ infoModal.subLink ]]</a></a-col>
                 <a-col :sx="24" :md="2" style="text-align: right;">
                     <a-tooltip title='{{ i18n "copy" }}'>
-                        <button class="ant-btn ant-btn-primary" id="copy-sub-link" @click="copyToClipboard('copy-sub-link', infoModal.subLink)">
+                        <button class="ant-btn ant-btn-primary" @click="copyToClipboard(infoModal.subLink)">
                             <a-icon type="snippets"></a-icon>
                         </button>
                     </a-tooltip>
@@ -180,7 +212,7 @@
                 <a-col :sx="24" :md="22">JSON: <a :href="[[ infoModal.subJsonLink ]]" target="_blank">[[ infoModal.subJsonLink ]]</a></a-col>
                 <a-col :sx="24" :md="2" style="text-align: right;">
                     <a-tooltip title='{{ i18n "copy" }}'>
-                        <button class="ant-btn ant-btn-primary" id="copy-subJson-link" @click="copyToClipboard('copy-subJson-link', infoModal.subJsonLink)">
+                        <button class="ant-btn ant-btn-primary" @click="copyToClipboard(infoModal.subJsonLink)">
                             <a-icon type="snippets"></a-icon>
                         </button>
                     </a-tooltip>
@@ -193,7 +225,7 @@
                 <a-col :sx="24" :md="22"><a :href="[[ infoModal.tgLink ]]" target="_blank">@[[ infoModal.clientSettings.tgId ]]</a></a-col>
                 <a-col :sx="24" :md="2" style="text-align: right;">
                     <a-tooltip title='{{ i18n "copy" }}'>
-                        <button class="ant-btn ant-btn-primary" id="copy-tg-link" @click="copyToClipboard('copy-tg-link', '@' + infoModal.clientSettings.tgId)">
+                        <button class="ant-btn ant-btn-primary" @click="copyToClipboard('@' + infoModal.clientSettings.tgId)">
                             <a-icon type="snippets"></a-icon>
                         </button>
                     </a-tooltip>
@@ -203,10 +235,11 @@
         <template v-if="dbInbound.hasLink()">
             <a-divider>URL</a-divider>
             <a-row v-for="(link,index) in infoModal.links">
-                <a-col :sx="24" :md="22"><a-tag color="blue">[[ link.remark ]]</a-tag><br />[[ link.link ]]</a-col>
+                <a-col :sx="24" :md="22"><a-tag color="blue">[[ link.remark ]]</a-tag><br />
+                    <span style="white-space: pre-wrap; overflow-wrap: anywhere;">[[ link.link ]]</span></a-col>
                 <a-col :sx="24" :md="2" style="text-align: right;">
                     <a-tooltip title='{{ i18n "pages.inbounds.copyLink" }}'>
-                        <button class="ant-btn ant-btn-primary" :id="'copy-url-link-'+index" @click="copyToClipboard('copy-url-link-'+index, link.link)">
+                        <button class="ant-btn ant-btn-primary" @click="copyToClipboard(link.link)">
                             <a-icon type="snippets"></a-icon>
                         </button>
                     </a-tooltip>
@@ -221,7 +254,7 @@
                 <a-col :span="22"><a-tag color="blue">[[ link.remark ]]</a-tag><br />[[ link.link ]]</a-col>
                 <a-col :span="2" style="text-align: right;">
                     <a-tooltip title='{{ i18n "pages.inbounds.copyLink" }}'>
-                        <button class="ant-btn ant-btn-primary" :id="'copy-url-link-'+index" @click="copyToClipboard('copy-url-link-'+index, link.link)">
+                        <button class="ant-btn ant-btn-primary" @click="copyToClipboard(link.link)">
                             <a-icon type="snippets"></a-icon>
                         </button>
                     </a-tooltip>
@@ -232,7 +265,7 @@
             <tr>
                 <th>{{ i18n "pages.inbounds.targetAddress" }}</th>
                 <th>{{ i18n "pages.inbounds.destinationPort" }}</th>
-                <th>{{ i18n "pages.inbounds.network" }}</th>
+                <th>{{ i18n "network" }}</th>
                 <th>FollowRedirect</th>
             </tr><tr>
                 <td><a-tag color="blue">[[ inbound.settings.address ]]</a-tag></td>
@@ -244,7 +277,7 @@
         <table v-if="dbInbound.isSocks" style="margin-bottom: 10px; width: 100%;">
             <tr>
                 <th>{{ i18n "password" }} Auth</th>
-                <th>{{ i18n "pages.inbounds.enable" }} udp</th>
+                <th>{{ i18n "enable" }} udp</th>
                 <th>IP</th>
             </tr>
             <tr>
@@ -275,71 +308,6 @@
                 <td><a-tag color="blue">[[ account.pass ]]</a-tag></td>
             </tr>
         </table>
-        <table v-if="dbInbound.isWireguard" style="margin-bottom: 10px; width: 100%;">
-            <tr class="client-table-odd-row">
-                <td>{{ i18n "pages.xray.wireguard.secretKey" }}</td>
-                <td>[[ inbound.settings.secretKey ]]</td>
-            </tr>
-            <tr>
-                <td>{{ i18n "pages.xray.wireguard.publicKey" }}</td>
-                <td>[[ inbound.settings.pubKey ]]</td>
-            </tr>
-            <tr class="client-table-odd-row">
-                <td>MTU</td>
-                <td>[[ inbound.settings.mtu ]]</td>
-            </tr>
-            <tr>
-                <td>No Kernel Tun</td>
-                <td>[[ inbound.settings.noKernelTun ]]</td>
-            </tr>
-        <template v-for="(peer, index) in inbound.settings.peers">
-            <tr>
-                <td colspan="2"><a-divider>Peer [[ index + 1 ]]</a-divider></td>
-            </tr>
-            <tr class="client-table-odd-row">
-                <td>{{ i18n "pages.xray.wireguard.secretKey" }}</td>
-                <td>[[ peer.privateKey ]]</td>
-            </tr>
-            <tr>
-                <td>{{ i18n "pages.xray.wireguard.publicKey" }}</td>
-                <td>[[ peer.publicKey ]]</td>
-            </tr>
-            <tr class="client-table-odd-row">
-                <td>{{ i18n "pages.xray.wireguard.psk" }}</td>
-                <td>[[ peer.psk ]]</td>
-            </tr>
-            <tr>
-                <td>{{ i18n "pages.xray.wireguard.allowedIPs" }}</td>
-                <td>[[ peer.allowedIPs.join(",") ]]</td>
-            </tr>
-            <tr class="client-table-odd-row">
-                <td>Keep Alive</td>
-                <td>[[ peer.keepAlive ]]</td>
-            </tr>
-            <tr>
-                <td colspan="2">
-                    <a-row>
-                        <a-col :span="22" style="overflow-wrap: anywhere;">
-                            <a-tag color="blue">Config</a-tag>
-                            <div 
-                            v-html="infoModal.links[index].replaceAll(`\n`,`<br />`)"
-                            style="border-radius: 1rem; padding: 0.5rem;"
-                            class="client-table-odd-row"></div>
-                        </a-col>
-                        <a-col :span="2" style="text-align: right;">
-                            <a-tooltip title='{{ i18n "pages.inbounds.copyLink" }}'>
-                                <button class="ant-btn ant-btn-primary"
-                                    :id="'copy-url-link-'+index"
-                                    @click="copyToClipboard('copy-url-link-'+index, infoModal.links[index])">
-                                    <a-icon type="snippets"></a-icon>
-                                </button>
-                            </a-tooltip>
-                        </a-col>
-                    </a-row>
-                </td>
-            </tr>
-        </table>
-        </template>
     </template>
 </a-modal>
 <script>
@@ -365,11 +333,7 @@
             this.clientSettings = this.inbound.clients ? this.inbound.clients[index] : null;
             this.isExpired = this.inbound.clients ? this.inbound.isExpiry(index): this.dbInbound.isExpiry;
             this.clientStats = this.inbound.clients ? this.dbInbound.clientStats.find(row => row.email === this.clientSettings.email) : [];
-            if (this.inbound.protocol == Protocols.WIREGUARD){
-                this.links = this.inbound.genInboundLinks(dbInbound.remark).split('\r\n')
-            } else {
-                this.links = this.inbound.genAllLinks(this.dbInbound.remark, app.remarkModel, this.clientSettings);
-            }
+            this.links = this.inbound.genAllLinks(this.dbInbound.remark, app.remarkModel, this.clientSettings);
             if (this.clientSettings) {
                 if (this.clientSettings.subId) {
                     this.subLink = this.genSubLink(this.clientSettings.subId);
@@ -417,15 +381,14 @@
             },
         },
         methods: {
-            copyToClipboard(elementId,content) {
-                this.infoModal.clipboard = new ClipboardJS('#' + elementId, {
-                        text: () => content,
-                    });
-                this.infoModal.clipboard.on('success', () => { 
-                    app.$message.success('{{ i18n "copied" }}')
-                    this.infoModal.clipboard.destroy();
+            copyToClipboard(content) {
+                ClipboardUtil.copyToClipboard(content).then(success => {
+                    if (success) {
+                        app.$message.success('{{ i18n "copied" }}');
+                    }
                 });
             },
+
             statsColor(stats) {
                 return usageColor(stats.up + stats.down, app.trafficDiff, stats.total);
             },

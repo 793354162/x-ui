@@ -7,6 +7,9 @@ import (
 	"time"
 
 	"github.com/alireza0/x-ui/util/common"
+	"github.com/alireza0/x-ui/util/cronspec"
+	"github.com/alireza0/x-ui/util/proxyclient"
+	"github.com/alireza0/x-ui/util/tgchat"
 )
 
 type Msg struct {
@@ -16,43 +19,46 @@ type Msg struct {
 }
 
 type AllSetting struct {
-	WebListen        string `json:"webListen" form:"webListen"`
-	WebDomain        string `json:"webDomain" form:"webDomain"`
-	WebPort          int    `json:"webPort" form:"webPort"`
-	WebCertFile      string `json:"webCertFile" form:"webCertFile"`
-	WebKeyFile       string `json:"webKeyFile" form:"webKeyFile"`
-	WebBasePath      string `json:"webBasePath" form:"webBasePath"`
-	SessionMaxAge    int    `json:"sessionMaxAge" form:"sessionMaxAge"`
-	PageSize         int    `json:"pageSize" form:"pageSize"`
-	ExpireDiff       int    `json:"expireDiff" form:"expireDiff"`
-	TrafficDiff      int    `json:"trafficDiff" form:"trafficDiff"`
-	RemarkModel      string `json:"remarkModel" form:"remarkModel"`
-	TgBotEnable      bool   `json:"tgBotEnable" form:"tgBotEnable"`
-	TgBotToken       string `json:"tgBotToken" form:"tgBotToken"`
-	TgBotChatId      string `json:"tgBotChatId" form:"tgBotChatId"`
-	TgRunTime        string `json:"tgRunTime" form:"tgRunTime"`
-	TgBotBackup      bool   `json:"tgBotBackup" form:"tgBotBackup"`
-	TgBotLoginNotify bool   `json:"tgBotLoginNotify" form:"tgBotLoginNotify"`
-	TgCpu            int    `json:"tgCpu" form:"tgCpu"`
-	TgLang           string `json:"tgLang" form:"tgLang"`
-	TimeLocation     string `json:"timeLocation" form:"timeLocation"`
-	SubEnable        bool   `json:"subEnable" form:"subEnable"`
-	SubListen        string `json:"subListen" form:"subListen"`
-	SubPort          int    `json:"subPort" form:"subPort"`
-	SubPath          string `json:"subPath" form:"subPath"`
-	SubDomain        string `json:"subDomain" form:"subDomain"`
-	SubCertFile      string `json:"subCertFile" form:"subCertFile"`
-	SubKeyFile       string `json:"subKeyFile" form:"subKeyFile"`
-	SubUpdates       int    `json:"subUpdates" form:"subUpdates"`
-	SubEncrypt       bool   `json:"subEncrypt" form:"subEncrypt"`
-	SubShowInfo      bool   `json:"subShowInfo" form:"subShowInfo"`
-	SubURI           string `json:"subURI" form:"subURI"`
-	SubJsonPath      string `json:"subJsonPath" form:"subJsonPath"`
-	SubJsonURI       string `json:"subJsonURI" form:"subJsonURI"`
-	SubJsonFragment  string `json:"subJsonFragment" form:"subJsonFragment"`
-	SubJsonNoises    string `json:"subJsonNoises" form:"subJsonNoises"`
-	SubJsonMux       string `json:"subJsonMux" form:"subJsonMux"`
-	SubJsonRules     string `json:"subJsonRules" form:"subJsonRules"`
+	WebListen          string `json:"webListen" form:"webListen"`
+	WebDomain          string `json:"webDomain" form:"webDomain"`
+	WebPort            int    `json:"webPort" form:"webPort"`
+	WebCertFile        string `json:"webCertFile" form:"webCertFile"`
+	WebKeyFile         string `json:"webKeyFile" form:"webKeyFile"`
+	WebBasePath        string `json:"webBasePath" form:"webBasePath"`
+	SessionMaxAge      int    `json:"sessionMaxAge" form:"sessionMaxAge"`
+	PageSize           int    `json:"pageSize" form:"pageSize"`
+	ExpireDiff         int    `json:"expireDiff" form:"expireDiff"`
+	TrafficDiff        int    `json:"trafficDiff" form:"trafficDiff"`
+	RemarkModel        string `json:"remarkModel" form:"remarkModel"`
+	OutboundTestUrl    string `json:"outboundTestUrl" form:"outboundTestUrl"`
+	TgBotEnable        bool   `json:"tgBotEnable" form:"tgBotEnable"`
+	TgBotToken         string `json:"tgBotToken" form:"tgBotToken"`
+	TgBotChatId        string `json:"tgBotChatId" form:"tgBotChatId"`
+	TgBotProxy         string `json:"tgBotProxy" form:"tgBotProxy"`
+	TgBotNotifyOnly    bool   `json:"tgBotNotifyOnly" form:"tgBotNotifyOnly"`
+	TgRunTime          string `json:"tgRunTime" form:"tgRunTime"`
+	TgBotBackup        bool   `json:"tgBotBackup" form:"tgBotBackup"`
+	TgBotLoginNotify   bool   `json:"tgBotLoginNotify" form:"tgBotLoginNotify"`
+	TgCpu              int    `json:"tgCpu" form:"tgCpu"`
+	TgLang             string `json:"tgLang" form:"tgLang"`
+	TimeLocation       string `json:"timeLocation" form:"timeLocation"`
+	SubEnable          bool   `json:"subEnable" form:"subEnable"`
+	SubListen          string `json:"subListen" form:"subListen"`
+	SubPort            int    `json:"subPort" form:"subPort"`
+	SubPath            string `json:"subPath" form:"subPath"`
+	SubDomain          string `json:"subDomain" form:"subDomain"`
+	SubCertFile        string `json:"subCertFile" form:"subCertFile"`
+	SubKeyFile         string `json:"subKeyFile" form:"subKeyFile"`
+	SubUpdates         int    `json:"subUpdates" form:"subUpdates"`
+	SubEncrypt         bool   `json:"subEncrypt" form:"subEncrypt"`
+	SubShowInfo        bool   `json:"subShowInfo" form:"subShowInfo"`
+	SubURI             string `json:"subURI" form:"subURI"`
+	SubJsonPath        string `json:"subJsonPath" form:"subJsonPath"`
+	SubJsonURI         string `json:"subJsonURI" form:"subJsonURI"`
+	SubJsonMux         string `json:"subJsonMux" form:"subJsonMux"`
+	SubJsonRules       string `json:"subJsonRules" form:"subJsonRules"`
+	GlobalReset        string `json:"globalReset" form:"globalReset"`
+	IpBlockAfterRemove bool   `json:"ipBlockAfterRemove" form:"ipBlockAfterRemove"`
 }
 
 func (s *AllSetting) CheckValid() error {
@@ -115,6 +121,18 @@ func (s *AllSetting) CheckValid() error {
 	}
 	if !strings.HasSuffix(s.SubJsonPath, "/") {
 		s.SubJsonPath += "/"
+	}
+
+	if _, err := proxyclient.Parse(s.TgBotProxy); err != nil {
+		return err
+	}
+
+	if _, err := tgchat.Parse(s.TgBotChatId); err != nil {
+		return err
+	}
+
+	if _, err := cronspec.Parse(s.GlobalReset); err != nil {
+		return err
 	}
 
 	_, err := time.LoadLocation(s.TimeLocation)

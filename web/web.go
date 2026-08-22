@@ -15,8 +15,10 @@ import (
 	"time"
 
 	"github.com/alireza0/x-ui/config"
+	"github.com/alireza0/x-ui/iplimit"
 	"github.com/alireza0/x-ui/logger"
 	"github.com/alireza0/x-ui/util/common"
+	"github.com/alireza0/x-ui/util/cronspec"
 	"github.com/alireza0/x-ui/web/controller"
 	"github.com/alireza0/x-ui/web/job"
 	"github.com/alireza0/x-ui/web/locale"
@@ -40,43 +42,10 @@ var htmlFS embed.FS
 //go:embed translation/*
 var i18nFS embed.FS
 
+//go:embed api/openapi.json
+var openAPIFS embed.FS
+
 var startTime = time.Now()
-
-type wrapAssetsFS struct {
-	embed.FS
-}
-
-func (f *wrapAssetsFS) Open(name string) (fs.File, error) {
-	file, err := f.FS.Open("assets/" + name)
-	if err != nil {
-		return nil, err
-	}
-	return &wrapAssetsFile{
-		File: file,
-	}, nil
-}
-
-type wrapAssetsFile struct {
-	fs.File
-}
-
-func (f *wrapAssetsFile) Stat() (fs.FileInfo, error) {
-	info, err := f.File.Stat()
-	if err != nil {
-		return nil, err
-	}
-	return &wrapAssetsFileInfo{
-		FileInfo: info,
-	}, nil
-}
-
-type wrapAssetsFileInfo struct {
-	fs.FileInfo
-}
-
-func (f *wrapAssetsFileInfo) ModTime() time.Time {
-	return startTime
-}
 
 type Server struct {
 	httpServer *http.Server
@@ -87,6 +56,7 @@ type Server struct {
 	xui    *controller.XUIController
 	api    *controller.APIController
 
+	ipLimitFw      iplimit.Firewall
 	xrayService    service.XrayService
 	settingService service.SettingService
 	tgbotService   service.Tgbot
@@ -134,8 +104,13 @@ func (s *Server) getHtmlTemplate(funcMap template.FuncMap) (*template.Template, 
 		if d.IsDir() {
 			newT, err := t.ParseFS(htmlFS, path+"/*.html")
 			if err != nil {
-				// ignore
-				return nil
+				// Directories that hold no templates of their own are expected;
+				// anything else is a broken template and must not be swallowed,
+				// or the panel starts up and only fails once a page is served.
+				if strings.Contains(err.Error(), "pattern matches no files") {
+					return nil
+				}
+				return err
 			}
 			t = newT
 		}
@@ -181,7 +156,9 @@ func (s *Server) initRouter() (*gin.Engine, error) {
 	if err != nil {
 		return nil, err
 	}
-	engine.Use(gzip.Gzip(gzip.DefaultCompression, gzip.WithExcludedPaths([]string{basePath + "xui/API/"})))
+	// Assets are served pre-compressed by serveAssets, so exclude them from the
+	// on-the-fly gzip middleware to avoid recompressing them on every request.
+	engine.Use(gzip.Gzip(gzip.DefaultCompression, gzip.WithExcludedPaths([]string{basePath + "xui/API/", basePath + "assets/"})))
 	assetsBasePath := basePath + "assets/"
 
 	store := cookie.NewStore(secret)
@@ -194,8 +171,13 @@ func (s *Server) initRouter() (*gin.Engine, error) {
 	}
 	store.Options(sessionOptions)
 	engine.Use(sessions.Sessions("x-ui", store))
+	iplimitSupported := "true"
+	if !s.ipLimitFw.Supported() {
+		iplimitSupported = "false"
+	}
 	engine.Use(func(c *gin.Context) {
 		c.Set("base_path", basePath)
+		c.Set("iplimitSupported", iplimitSupported)
 	})
 	engine.Use(func(c *gin.Context) {
 		uri := c.Request.RequestURI
@@ -225,7 +207,6 @@ func (s *Server) initRouter() (*gin.Engine, error) {
 			return nil, err
 		}
 		engine.LoadHTMLFiles(files...)
-		engine.StaticFS(basePath+"assets", http.FS(os.DirFS("web/assets")))
 	} else {
 		// for production
 		template, err := s.getHtmlTemplate(engine.FuncMap)
@@ -233,8 +214,8 @@ func (s *Server) initRouter() (*gin.Engine, error) {
 			return nil, err
 		}
 		engine.SetHTMLTemplate(template)
-		engine.StaticFS(basePath+"assets", http.FS(&wrapAssetsFS{FS: assetsFS}))
 	}
+	engine.GET(basePath+"assets/*filepath", serveAssets)
 
 	g := engine.Group(basePath)
 
@@ -242,6 +223,9 @@ func (s *Server) initRouter() (*gin.Engine, error) {
 	s.server = controller.NewServerController(g)
 	s.xui = controller.NewXUIController(g)
 	s.api = controller.NewAPIController(g, s.server)
+	if err := controller.ServeOpenAPI(g, openAPIFS); err != nil {
+		return nil, err
+	}
 
 	engine.NoRoute(func(c *gin.Context) {
 		c.AbortWithStatus(http.StatusNotFound)
@@ -258,6 +242,10 @@ func (s *Server) startTask() {
 	// Check whether xray is running every 30 seconds
 	s.cron.AddJob("@every 30s", job.NewCheckXrayRunningJob())
 
+	// Refresh the online-user cache, and enforce per-client IP limits with it
+	// where the platform supports the firewall backend.
+	s.cron.AddJob("@every 2s", job.NewIpLimitJob())
+
 	// Check if xray needs to be restarted
 	s.cron.AddFunc("@every 10s", func() {
 		if s.xrayService.IsNeedRestartAndSetFalse() {
@@ -273,6 +261,18 @@ func (s *Server) startTask() {
 		// Statistics every 10 seconds, start the delay for 5 seconds for the first time, and staggered with the time to restart xray
 		s.cron.AddJob("@every 10s", job.NewXrayTrafficJob())
 	}()
+
+	// Periodic reset of every client's traffic, when the admin configured one.
+	if spec, err := s.settingService.GetGlobalReset(); err != nil {
+		logger.Warning("get global reset schedule failed:", err)
+	} else if schedule, err := cronspec.Parse(spec); err != nil {
+		logger.Warning("global reset schedule ignored:", err)
+	} else if schedule != nil {
+		// The scheduler's own parser demands a seconds field, so hand it the
+		// schedule already parsed rather than the admin's expression.
+		s.cron.Schedule(schedule, job.NewResetTrafficJob(schedule))
+		logger.Info("global traffic reset enabled, schedule: ", spec)
+	}
 
 	// Make a traffic condition every day, 8:30
 	var entry cron.EntryID
@@ -307,6 +307,18 @@ func (s *Server) Start() (err error) {
 			s.Stop()
 		}
 	}()
+
+	s.ipLimitFw = iplimit.NewFirewall()
+	if s.ipLimitFw.Supported() {
+		if err := s.ipLimitFw.Init(); err != nil {
+			logger.Error("init iplimit failed:", err)
+		}
+	}
+
+	ipBlockAfterRemove, _ := s.settingService.GetIpBlockAfterRemove()
+	if err := service.InitOnlineStore(s.ipLimitFw, ipBlockAfterRemove); err != nil {
+		logger.Warning("init online store failed:", err)
+	}
 
 	loc, err := s.settingService.GetTimeLocation()
 	if err != nil {
@@ -344,9 +356,11 @@ func (s *Server) Start() (err error) {
 	if certFile != "" || keyFile != "" {
 		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 		if err == nil {
-			c := &tls.Config{
-				Certificates: []tls.Certificate{cert},
+			webDomain, err := s.settingService.GetWebDomain()
+			if err != nil {
+				return err
 			}
+			c := network.NewTLSConfig(cert, webDomain)
 			listener = network.NewAutoHttpsListener(listener)
 			listener = tls.NewListener(listener, c)
 			logger.Info("Web server running HTTPS on", listener.Addr())
@@ -381,6 +395,11 @@ func (s *Server) Start() (err error) {
 func (s *Server) Stop() error {
 	s.cancel()
 	s.xrayService.StopXray()
+	if s.ipLimitFw != nil {
+		if err := s.ipLimitFw.Stop(); err != nil {
+			logger.Warning("stop iplimit failed:", err)
+		}
+	}
 	if s.cron != nil {
 		s.cron.Stop()
 	}
